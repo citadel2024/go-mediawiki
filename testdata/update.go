@@ -10,12 +10,12 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 	"gitlab.com/tozd/go/errors"
 
-	"gitlab.com/tozd/go/mediawiki"
+	"github.com/citadel2024/mediawiki"
 )
 
 const (
 	maxEntries = 10
-	userAgent  = "go-mediawiki user agent (https://gitlab.com/tozd/go/mediawiki)"
+	userAgent  = "go-mediawiki user agent (https://github.com/citadel2024/mediawiki)"
 )
 
 func CommonsEntities(ctx context.Context, client *retryablehttp.Client) errors.E {
