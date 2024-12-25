@@ -255,6 +255,7 @@ const (
 	MusicalNotation
 	WikiBaseForm
 	TabularData
+	EntitySchema
 )
 
 func (t DataType) MarshalJSON() ([]byte, error) {
@@ -294,6 +295,8 @@ func (t DataType) MarshalJSON() ([]byte, error) {
 		buffer.WriteString("wikibase-form")
 	case TabularData:
 		buffer.WriteString("tabular-data")
+	case EntitySchema:
+		buffer.WriteString("entity-schema")
 	}
 	buffer.WriteString(`"`)
 	return buffer.Bytes(), nil
@@ -340,6 +343,8 @@ func (t *DataType) UnmarshalJSON(b []byte) error {
 		*t = WikiBaseForm
 	case "tabular-data":
 		*t = TabularData
+	case "entity-schema":
+		*t = EntitySchema
 	default:
 		errE := errors.WithMessage(ErrInvalidValue, "data type")
 		errors.Details(errE)["value"] = s
