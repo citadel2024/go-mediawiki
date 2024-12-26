@@ -15,6 +15,9 @@ const (
 	saveInterval   = 5 * time.Minute
 )
 
+// CheckpointConfig represents the configuration for the CheckpointManager
+// SaveInterval is the interval to save the checkpoint to the checkpoint file.
+// Due to saving interval, the program may lose some items if it crashes before saving the checkpoint.
 type CheckpointConfig struct {
 	SaveInterval   time.Duration
 	ItemsThreshold int
@@ -23,13 +26,21 @@ type CheckpointConfig struct {
 
 // Checkpoint represents the checkpoint data
 // TotalItems is the total number of items we send into channel, we will increase this number based on the previous checkpoint.
-// Hence, next time we start the program, we can skip these items, but to make sure the items in the channel were processed correctly,
-// we need to retry these items, so we need to skip TotalItems - len(channel) items.
+// ProcessedPosition is the current position of the item we are processing, however, for multiple-consumer program, ProcessedPosition does not
+// mean the items before ProcessedPosition were processed, because the items in the channel are not processed in order.
+// Some items may be processed, the others may not.
+// Hence, next time we start the program, to make sure the items in the channel were processed correctly,
+// we need to retry these items in the channel, so we need to start from the beginning of the channel (ProcessedPosition - len(goroutines)),
+// whatever the position is the first or the last item in the channel, we can make sure all items in the channel were processed.
+// TotalItems >= ProcessedPosition - len(goroutines)
+// The producer is single-threaded, so the rows channel is FIFO.
+// Bitset is also a good choice to track the processed items, but it is not necessary. We only need a checkpoint.
 type Checkpoint struct {
-	TotalItems    int       `json:"total_items"`
-	SaveTimestamp time.Time `json:"timestamp"`
-	LastItemID    string    `json:"last_item_id"` // This field is unused, user can just use TotalItems to skip items already processed
-	Position      int       `json:"position"`
+	TotalItems        int       `json:"total_items"`
+	SaveTimestamp     time.Time `json:"timestamp"`
+	LastItemID        string    `json:"last_item_id"` // This field is unused, user can just use TotalItems to skip items already processed
+	ProcessedPosition int       `json:"position"`
+	//LastProcessedThreadCount int `json:"last_processed_thread_count"` we can store the number of goroutines in the last run
 }
 
 type CheckpointManager struct {
@@ -100,7 +111,7 @@ func (cm *CheckpointManager) autoSave() {
 func (cm *CheckpointManager) UpdateProgressAndMaybeSave(position int, itemID string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	cm.currentCheckpoint.Position = position
+	cm.currentCheckpoint.ProcessedPosition = position
 	cm.currentCheckpoint.LastItemID = itemID
 	cm.currentCheckpoint.TotalItems++
 	cm.itemsSinceLastCheckpoint++

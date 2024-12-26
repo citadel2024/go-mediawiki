@@ -150,7 +150,7 @@ type ProcessConfig[T any] struct {
 // We only use one goroutine for downloading and processing the file.
 func getFileRows[T any]( //nolint:maintidx
 	ctx context.Context, config *ProcessConfig[T], wg *sync.WaitGroup,
-	output chan<- []byte, errs chan<- errors.E,
+	output chan<- []byte, errs chan<- errors.E, cm *CheckpointManager,
 ) {
 	defer wg.Done()
 
@@ -267,25 +267,14 @@ func getFileRows[T any]( //nolint:maintidx
 	if config.Compression == Tar || config.Compression == GZIPTar || config.Compression == BZIP2Tar {
 		decompressedReader = tar.NewReader(decompressedReader)
 	}
-	var cm *CheckpointManager
-	if config.CheckpointConfig != nil {
-		cm = NewCheckpointManagerWithConfig(config.CheckpointConfig)
-	} else {
-		cm = NewCheckpointManager()
-	}
 	var count = 0
 	// TotalItems is the number of items we have processed so far.
-	skip := cm.currentCheckpoint.TotalItems
-	// WE NEED TO USE SAME CONFIGURATION TO CONTINUE FROM THE LAST CHECKPOINT.
-	// config.DecodingThreads is the size of the channel, after we send rows into the channel, we can not make sure they are processed,
-	// so we retry these items in the next run.
+	skip := cm.currentCheckpoint.ProcessedPosition
+	// WE NEED TO USE SAME GOROUTINE CONFIGURATION TO CONTINUE FROM THE LAST CHECKPOINT.
 	// For example, TotalItems is 100, and the size of the channel is 10, we can not make sure the last 10 items are processed, so retry them.
 	rollbackItemsToMakeSureProcessed := config.DecodingThreads
-	if cm.currentCheckpoint.TotalItems > rollbackItemsToMakeSureProcessed {
-		skip = cm.currentCheckpoint.TotalItems - rollbackItemsToMakeSureProcessed
-	} else {
-		skip = 0
-	}
+	skip = max(0, skip-rollbackItemsToMakeSureProcessed)
+	fmt.Println("Will skip items:", skip)
 	for {
 		if config.Compression == Tar || config.Compression == GZIPTar || config.Compression == BZIP2Tar {
 			// Go to the first or next file in gzip/tar.
@@ -335,17 +324,12 @@ func getFileRows[T any]( //nolint:maintidx
 			if count < skip {
 				continue
 			}
+			rowWithLineNumber := AddLineNumber(count, row)
 			select {
 			case <-ctx.Done():
 				errs <- errors.WithStack(ctx.Err())
 				return
-			case output <- row:
-			}
-			// In fact, it's not accurate to update progress here, because we only send rows into channels, it does not
-			// mean we have processed them, but it's good enough for progress.
-			// When we try to continue from the last checkpoint, we can retry more rows to make sure we have processed them.
-			if err := cm.UpdateProgressAndMaybeSave(0, ""); err != nil {
-				fmt.Println("Failed to update progress:", err)
+			case output <- rowWithLineNumber:
 			}
 		}
 
@@ -419,9 +403,19 @@ func makeValid(s string) string {
 	return b.String()
 }
 
-func decodeJSON[T any](ctx context.Context, r []byte, output chan<- T, errs chan<- errors.E) {
+type OutputData[T any] struct {
+	Value      T
+	LineNumber int // to pass to checkpoint manager
+}
+
+func decodeJSON[T any](ctx context.Context, r []byte, output chan<- OutputData[T], errs chan<- errors.E) {
+	lineNumber, data, _ := ParseLineNumber(r)
 	var e T
-	errE := x.UnmarshalWithoutUnknownFields(r, &e)
+	errE := x.UnmarshalWithoutUnknownFields(data, &e)
+	outputData := OutputData[T]{
+		Value:      e,
+		LineNumber: lineNumber,
+	}
 	if errE != nil {
 		errs <- errors.Prefix(errE, ErrJSONDecode)
 		return
@@ -430,26 +424,23 @@ func decodeJSON[T any](ctx context.Context, r []byte, output chan<- T, errs chan
 	case <-ctx.Done():
 		errs <- errors.WithStack(ctx.Err())
 		return
-	case output <- e:
+	case output <- outputData:
 	}
 }
 
 func decodeRows[T any](
 	ctx context.Context, config *ProcessConfig[T], wg *sync.WaitGroup, decodeRowsState *x.SyncVar[[]string],
-	input <-chan []byte, output chan<- T, errs chan<- errors.E,
+	input <-chan []byte, output chan<- OutputData[T], errs chan<- errors.E,
 ) {
 	defer wg.Done()
-
 	sqlParser := parser.New()
 	var columns []string
-
 	for {
 		select {
 		case row, ok := <-input:
 			if !ok {
 				return
 			}
-
 			if config.FileType == SQLDump {
 				rowString := x.ByteSlice2String(row)
 				stmt, err := sqlParser.ParseOneStmt(rowString, "", "")
@@ -534,7 +525,7 @@ func decodeRows[T any](
 
 func processItems[T any](
 	ctx context.Context, config *ProcessConfig[T], wg *sync.WaitGroup,
-	input <-chan T, errs chan<- errors.E,
+	input <-chan OutputData[T], errs chan<- errors.E, cm *CheckpointManager,
 ) {
 	defer wg.Done()
 
@@ -544,10 +535,13 @@ func processItems[T any](
 			if !ok {
 				return
 			}
-			err := config.Process(ctx, i)
+			err := config.Process(ctx, i.Value)
 			if err != nil {
 				errs <- err
 				return
+			}
+			if err := cm.UpdateProgressAndMaybeSave(i.LineNumber, ""); err != nil {
+				fmt.Println("Failed to update progress:", err)
 			}
 		case <-ctx.Done():
 			errs <- errors.WithStack(ctx.Err())
@@ -588,12 +582,17 @@ func Process[T any](ctx context.Context, config *ProcessConfig[T]) errors.E {
 	defer close(errs)
 
 	rows := make(chan []byte, config.DecodingThreads)
-	items := make(chan T, config.ItemsProcessingThreads)
-
+	items := make(chan OutputData[T], config.ItemsProcessingThreads)
+	var cm *CheckpointManager
+	if config.CheckpointConfig != nil {
+		cm = NewCheckpointManagerWithConfig(config.CheckpointConfig)
+	} else {
+		cm = NewCheckpointManager()
+	}
 	var getFileRowsWg sync.WaitGroup
 	mainWg.Add(1)
 	getFileRowsWg.Add(1)
-	go getFileRows(ctx, config, &getFileRowsWg, rows, errs)
+	go getFileRows(ctx, config, &getFileRowsWg, rows, errs, cm)
 	go func() {
 		getFileRowsWg.Wait()
 		mainWg.Done()
@@ -621,7 +620,7 @@ func Process[T any](ctx context.Context, config *ProcessConfig[T]) errors.E {
 	mainWg.Add(1)
 	for range config.ItemsProcessingThreads {
 		processItemWg.Add(1)
-		go processItems(ctx, config, &processItemWg, items, errs)
+		go processItems(ctx, config, &processItemWg, items, errs, cm)
 	}
 	go func() {
 		processItemWg.Wait()
