@@ -145,6 +145,8 @@ type ProcessConfig[T any] struct {
 	Compression            Compression
 }
 
+// getFileRows is a goroutine which downloads a file from URL, optionally saves it to Path,
+// We only use one goroutine for downloading and processing the file.
 func getFileRows[T any]( //nolint:maintidx
 	ctx context.Context, config *ProcessConfig[T], wg *sync.WaitGroup,
 	output chan<- []byte, errs chan<- errors.E,
@@ -167,7 +169,7 @@ func getFileRows[T any]( //nolint:maintidx
 				errs <- errE
 				return
 			}
-			// File does not exists. Continue.
+			// File does not exist. Continue.
 		} else {
 			defer compressedFile.Close()
 			compressedReader = compressedFile
@@ -265,6 +267,7 @@ func getFileRows[T any]( //nolint:maintidx
 		decompressedReader = tar.NewReader(decompressedReader)
 	}
 
+	cm := NewCheckpointManager()
 	for {
 		if config.Compression == Tar || config.Compression == GZIPTar || config.Compression == BZIP2Tar {
 			// Go to the first or next file in gzip/tar.
@@ -309,6 +312,10 @@ func getFileRows[T any]( //nolint:maintidx
 				}
 				errs <- err
 				return
+			}
+			currentPos := countingReader.Count()
+			if err := cm.UpdateProgressAndMaybeSave(currentPos, ""); err != nil {
+				fmt.Println("Failed to update progress:", err)
 			}
 			select {
 			case <-ctx.Done():
