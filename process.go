@@ -274,6 +274,18 @@ func getFileRows[T any]( //nolint:maintidx
 		cm = NewCheckpointManager()
 	}
 	var count int64 = 0
+	// TotalItems is the number of items we have processed so far.
+	skip := cm.currentCheckpoint.TotalItems
+	// WE NEED TO USE SAME CONFIGURATION TO CONTINUE FROM THE LAST CHECKPOINT.
+	// config.DecodingThreads is the size of the channel, after we send rows into the channel, we can not make sure they are processed,
+	// so we retry these items in the next run.
+	// For example, TotalItems is 100, and the size of the channel is 10, we can not make sure the last 10 items are processed, so retry them.
+	rollbackItemsToMakeSureProcessed := int64(config.DecodingThreads)
+	if cm.currentCheckpoint.TotalItems > rollbackItemsToMakeSureProcessed {
+		skip = cm.currentCheckpoint.TotalItems - rollbackItemsToMakeSureProcessed
+	} else {
+		skip = 0
+	}
 	for {
 		if config.Compression == Tar || config.Compression == GZIPTar || config.Compression == BZIP2Tar {
 			// Go to the first or next file in gzip/tar.
@@ -320,7 +332,7 @@ func getFileRows[T any]( //nolint:maintidx
 				return
 			}
 			count++
-			if count < cm.currentCheckpoint.TotalItems {
+			if count < skip {
 				continue
 			}
 			select {
