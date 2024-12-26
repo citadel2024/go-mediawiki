@@ -320,13 +320,6 @@ func getFileRows[T any]( //nolint:maintidx
 				return
 			}
 			count++
-			currentPos := countingReader.Count()
-			// In fact, it's not accurate to update progress here, because we only send rows into channels, it does not
-			// mean we have processed them, but it's good enough for progress.
-			// When we try to continue from the last checkpoint, we can retry more rows to make sure we have processed them.
-			if err := cm.UpdateProgressAndMaybeSave(currentPos, ""); err != nil {
-				fmt.Println("Failed to update progress:", err)
-			}
 			if count < cm.currentCheckpoint.TotalItems {
 				continue
 			}
@@ -335,6 +328,12 @@ func getFileRows[T any]( //nolint:maintidx
 				errs <- errors.WithStack(ctx.Err())
 				return
 			case output <- row:
+			}
+			// In fact, it's not accurate to update progress here, because we only send rows into channels, it does not
+			// mean we have processed them, but it's good enough for progress.
+			// When we try to continue from the last checkpoint, we can retry more rows to make sure we have processed them.
+			if err := cm.UpdateProgressAndMaybeSave(0, ""); err != nil {
+				fmt.Println("Failed to update progress:", err)
 			}
 		}
 
