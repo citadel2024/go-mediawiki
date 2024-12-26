@@ -143,6 +143,7 @@ type ProcessConfig[T any] struct {
 	Progress               func(context.Context, x.Progress)
 	FileType               FileType
 	Compression            Compression
+	CheckpointConfig       *CheckpointConfig
 }
 
 // getFileRows is a goroutine which downloads a file from URL, optionally saves it to Path,
@@ -266,8 +267,12 @@ func getFileRows[T any]( //nolint:maintidx
 	if config.Compression == Tar || config.Compression == GZIPTar || config.Compression == BZIP2Tar {
 		decompressedReader = tar.NewReader(decompressedReader)
 	}
-
-	cm := NewCheckpointManager()
+	var cm *CheckpointManager
+	if config.CheckpointConfig != nil {
+		cm = NewCheckpointManagerWithConfig(config.CheckpointConfig)
+	} else {
+		cm = NewCheckpointManager()
+	}
 	var count int64 = 0
 	for {
 		if config.Compression == Tar || config.Compression == GZIPTar || config.Compression == BZIP2Tar {
