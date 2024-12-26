@@ -21,6 +21,10 @@ type CheckpointConfig struct {
 	CheckpointFile string
 }
 
+// Checkpoint represents the checkpoint data
+// TotalItems is the total number of items we send into channel, we will increase this number based on the previous checkpoint.
+// Hence, next time we start the program, we can skip these items, but to make sure the items in the channel were processed correctly,
+// we need to retry these items, so we need to skip TotalItems - len(channel) items.
 type Checkpoint struct {
 	TotalItems    int       `json:"total_items"`
 	SaveTimestamp time.Time `json:"timestamp"`
