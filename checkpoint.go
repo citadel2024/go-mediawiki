@@ -17,21 +17,21 @@ const (
 
 type CheckpointConfig struct {
 	SaveInterval   time.Duration
-	ItemsThreshold int64
+	ItemsThreshold int
 	CheckpointFile string
 }
 
 type Checkpoint struct {
-	TotalItems    int64     `json:"total_items"`
+	TotalItems    int       `json:"total_items"`
 	SaveTimestamp time.Time `json:"timestamp"`
 	LastItemID    string    `json:"last_item_id"` // This field is unused, user can just use TotalItems to skip items already processed
-	Position      int64     `json:"position"`     // This field is unused, user can just use TotalItems to skip items already processed
+	Position      int       `json:"position"`
 }
 
 type CheckpointManager struct {
 	config                   *CheckpointConfig
 	currentCheckpoint        *Checkpoint
-	itemsSinceLastCheckpoint int64
+	itemsSinceLastCheckpoint int
 	mu                       sync.Mutex
 	dirty                    bool
 }
@@ -93,7 +93,7 @@ func (cm *CheckpointManager) autoSave() {
 
 // UpdateProgressAndMaybeSave updates the checkpoint with the current position and itemID
 // We need to invoke this method every time we process an item
-func (cm *CheckpointManager) UpdateProgressAndMaybeSave(position int64, itemID string) error {
+func (cm *CheckpointManager) UpdateProgressAndMaybeSave(position int, itemID string) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.currentCheckpoint.Position = position
@@ -153,6 +153,12 @@ func (cm *CheckpointManager) loadCheckpoint() error {
 	fmt.Println("Loaded checkpoint", checkpoint)
 	cm.currentCheckpoint = checkpoint
 	return nil
+}
+
+func (cm *CheckpointManager) GetCheckpoint() *Checkpoint {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	return cm.currentCheckpoint
 }
 
 func (cm *CheckpointManager) Close() error {
