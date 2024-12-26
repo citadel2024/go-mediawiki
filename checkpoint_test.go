@@ -9,23 +9,51 @@ import (
 )
 
 func TestNewCheckpointManager(t *testing.T) {
-	os.Remove(checkpointFile)
-	cm := NewCheckpointManager()
+	tmpFile := "TestNewCheckpointManager.json"
+	cm := NewCheckpointManagerWithConfig(
+		&CheckpointConfig{
+			SaveInterval:   time.Second,
+			ItemsThreshold: 1,
+			CheckpointFile: tmpFile,
+		})
+	defer os.Remove(tmpFile)
+
 	assert.NotNil(t, cm)
 	assert.NotNil(t, cm.currentCheckpoint)
 	assert.Equal(t, int64(0), cm.currentCheckpoint.TotalItems)
 }
 
+func TestCheckpointManager_AutoSaveTicker(t *testing.T) {
+	tmpFile := "TestCheckpointManager_AutoSaveTicker.json"
+	cm := NewCheckpointManagerWithConfig(
+		&CheckpointConfig{
+			SaveInterval:   time.Second,
+			ItemsThreshold: 1,
+			CheckpointFile: tmpFile,
+		})
+	err := cm.UpdateProgressAndMaybeSave(1, "item1")
+	assert.NoError(t, err)
+	time.Sleep(time.Second * 2)
+
+	data, err := os.ReadFile(tmpFile)
+	assert.NoError(t, err)
+
+	var checkpoint Checkpoint
+	err = json.Unmarshal(data, &checkpoint)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), checkpoint.TotalItems)
+	assert.Equal(t, int64(1), checkpoint.Position)
+	assert.Equal(t, "item1", checkpoint.LastItemID)
+}
+
 func TestCheckpointManager_UpdateProgressAndMaybeSave(t *testing.T) {
 	tmpFile := "TestCheckpointManager_UpdateProgressAndMaybeSave.json"
-	cm := &CheckpointManager{
-		config: &CheckpointConfig{
+	cm := NewCheckpointManagerWithConfig(
+		&CheckpointConfig{
 			SaveInterval:   time.Second,
 			ItemsThreshold: 2,
 			CheckpointFile: tmpFile,
-		},
-		currentCheckpoint: &Checkpoint{},
-	}
+		})
 	defer os.Remove(tmpFile)
 
 	err := cm.UpdateProgressAndMaybeSave(1, "item1")
@@ -110,7 +138,7 @@ func TestCheckpointManager_LoadCheckpoint(t *testing.T) {
 	assert.Equal(t, testCheckpoint.Position, cm.currentCheckpoint.Position)
 }
 
-func TestCheckpointManager_Close(t *testing.T) {
+func TestCheckpointManager_CloseAndSave(t *testing.T) {
 	tmpFile := "TestCheckpointManager_Close.json"
 	cm := &CheckpointManager{
 		config: &CheckpointConfig{

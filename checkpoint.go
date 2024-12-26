@@ -62,6 +62,21 @@ func NewCheckpointManager() *CheckpointManager {
 	return cm
 }
 
+func NewCheckpointManagerWithConfig(config *CheckpointConfig) *CheckpointManager {
+	cm := &CheckpointManager{
+		config: config,
+	}
+	if err := cm.loadCheckpoint(); err != nil {
+		if os.IsNotExist(err) {
+			cm.currentCheckpoint = &Checkpoint{}
+		} else {
+			panic(fmt.Sprintf("Failed to load checkpoint: %v", err))
+		}
+	}
+	go cm.autoSave()
+	return cm
+}
+
 // autoSave saves the checkpoint to the checkpoint file every saveInterval
 func (cm *CheckpointManager) autoSave() {
 	ticker := time.NewTicker(cm.config.SaveInterval)
