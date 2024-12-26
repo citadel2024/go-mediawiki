@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gitlab.com/tozd/go/errors"
 
-	"gitlab.com/tozd/go/mediawiki"
+	"github.com/citadel2024/go-mediawiki"
 )
 
 const (

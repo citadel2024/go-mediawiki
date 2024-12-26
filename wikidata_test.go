@@ -17,7 +17,7 @@ import (
 	"gitlab.com/tozd/go/errors"
 	"gitlab.com/tozd/go/x"
 
-	"gitlab.com/tozd/go/mediawiki"
+	"github.com/citadel2024/go-mediawiki"
 )
 
 const (
