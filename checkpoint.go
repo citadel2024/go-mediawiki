@@ -36,6 +36,13 @@ type CheckpointManager struct {
 	dirty                    bool
 }
 
+// NewCheckpointManager creates a new CheckpointManager
+// For better performance, we save the checkpoint to the checkpoint file every saveInterval or when the number of
+// items processed since the last checkpoint exceeds the threshold.
+// It means that we don't save the checkpoint every time we process an item, so the program which uses this package need ability to
+// 1. Recover from the last checkpoint, and skip items already processed.
+// 2. The program should be able to handle the case when the checkpoint file is missing.
+// 3. You may need to handle duplicate items if the program crashes after processing an item but before saving the checkpoint.
 func NewCheckpointManager() *CheckpointManager {
 	cm := &CheckpointManager{
 		config: &CheckpointConfig{
